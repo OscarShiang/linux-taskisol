@@ -42,6 +42,7 @@
 #include <linux/version.h>
 #include <linux/ctype.h>
 #include <linux/syscall_user_dispatch.h>
+#include <linux/isolation.h>
 
 #include <linux/compat.h>
 #include <linux/syscalls.h>
@@ -2549,6 +2550,11 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 	case PR_SET_SYSCALL_USER_DISPATCH:
 		error = set_syscall_user_dispatch(arg2, arg3, arg4,
 						  (char __user *) arg5);
+		break;
+	case PR_TASK_ISOLATION:
+		if (arg3 || arg4 || arg5)
+			return -EINVAL;
+		error = task_isolation_request(arg2);
 		break;
 	default:
 		error = -EINVAL;
