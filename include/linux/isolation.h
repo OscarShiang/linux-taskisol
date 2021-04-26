@@ -10,10 +10,65 @@
 #ifndef _LINUX_ISOLATION_H
 #define _LINUX_ISOLATION_H
 
+#include <stdarg.h>
+#include <linux/errno.h>
 #include <linux/cpumask.h>
 #include <linux/percpu.h>
+#include <linux/irqflags.h>
+#include <linux/prctl.h>
+#include <linux/types.h>
 
 #ifdef CONFIG_TASK_ISOLATION
+
+/*
+ * Logging
+ *
+ * This is the implementation of isolation-related messages with
+ * regular kernel logging. It is intended to be human-readable and
+ * should help with debugging and development of task isolation in
+ * kernel and applications that use task isolation.
+ *
+ * In the future this mechanism may become optional or will be
+ * removed, however informations in those messages will be still
+ * valuable for applications. Therefore it may be replaced or
+ * supplemented by event logging interface, possibly more structured
+ * one, accessible to applications.
+ */
+int task_isolation_message(int cpu, int level, bool supp, const char *fmt, ...);
+
+#define pr_task_isol_emerg(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_EMERG, false, fmt, ##__VA_ARGS__)
+#define pr_task_isol_alert(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_ALERT, false, fmt, ##__VA_ARGS__)
+#define pr_task_isol_crit(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_CRIT, false, fmt, ##__VA_ARGS__)
+#define pr_task_isol_err(cpu, fmt, ...)				\
+	task_isolation_message(cpu, LOGLEVEL_ERR, false, fmt, ##__VA_ARGS__)
+#define pr_task_isol_warn(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_WARNING, false, fmt, ##__VA_ARGS__)
+#define pr_task_isol_notice(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_NOTICE, false, fmt, ##__VA_ARGS__)
+#define pr_task_isol_info(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_INFO, false, fmt, ##__VA_ARGS__)
+#define pr_task_isol_debug(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_DEBUG, false, fmt, ##__VA_ARGS__)
+
+#define pr_task_isol_emerg_supp(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_EMERG, true, fmt, ##__VA_ARGS__)
+#define pr_task_isol_alert_supp(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_ALERT, true, fmt, ##__VA_ARGS__)
+#define pr_task_isol_crit_supp(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_CRIT, true, fmt, ##__VA_ARGS__)
+#define pr_task_isol_err_supp(cpu, fmt, ...)				\
+	task_isolation_message(cpu, LOGLEVEL_ERR, true, fmt, ##__VA_ARGS__)
+#define pr_task_isol_warn_supp(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_WARNING, true, fmt, ##__VA_ARGS__)
+#define pr_task_isol_notice_supp(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_NOTICE, true, fmt, ##__VA_ARGS__)
+#define pr_task_isol_info_supp(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_INFO, true, fmt, ##__VA_ARGS__)
+#define pr_task_isol_debug_supp(cpu, fmt, ...)			\
+	task_isolation_message(cpu, LOGLEVEL_DEBUG, true, fmt, ##__VA_ARGS__)
 
 #define BIT_LL_TASK_ISOLATION		(0)
 #define BIT_LL_TASK_ISOLATION_BROKEN	(1)
