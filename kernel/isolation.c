@@ -69,7 +69,31 @@ struct isol_task_desc {
 };
 static DEFINE_PER_CPU(struct isol_task_desc, isol_task_descs);
 
+/*
+ * Counter for isolation exiting procedures (from request to the start of
+ * cleanup) being attempted at once on a CPU. Normally incrementing of
+ * this counter is performed from the CPU that caused isolation breaking,
+ * however decrementing is done from the cleanup procedure, delegated to
+ * the CPU that is exiting isolation, not from the CPU that caused isolation
+ * breaking.
+ *
+ * If incrementing this counter while starting isolation exit procedure
+ * results in a value greater than 0, isolation exiting is already in
+ * progress, and cleanup did not start yet. This means, counter should be
+ * decremented back, and isolation exit that is already in progress, should
+ * be allowed to complete. Otherwise, a new isolation exit procedure should
+ * be started.
+ */
+DEFINE_PER_CPU(atomic_t, isol_exit_counter);
+
+/*
+ * Descriptor for isolation-breaking SMP calls
+ */
+DEFINE_PER_CPU(call_single_data_t, isol_break_csd);
+
 cpumask_var_t task_isolation_map;
+cpumask_var_t task_isolation_cleanup_map;
+static DEFINE_SPINLOCK(task_isolation_cleanup_lock);
 
 /* We can run on cpus that are isolated from the scheduler and are nohz_full. */
 static int __init task_isolation_init(void)
@@ -285,6 +309,249 @@ int task_isolation_request(unsigned int flags)
 }
 
 /*
+ * Perform actions that should be done immediately on exit from isolation.
+ */
+static void fast_task_isolation_cpu_cleanup(void *info)
+{
+	unsigned long flags;
+
+	/*
+	 * This function runs on a CPU that ran isolated task.
+	 * It should be called either directly when isolation breaking is
+	 * being processed, or using IPI from another CPU when it intends
+	 * to break isolation on the given CPU.
+	 *
+	 * We don't want this CPU running code from the rest of kernel
+	 * until other CPUs know that it is no longer isolated. Any
+	 * entry into kernel will call task_isolation_kernel_enter()
+	 * before calling this, so this will be already done by
+	 * setting per-cpu flags and synchronizing in that function.
+	 *
+	 * For development purposes it makes sense to check if it was
+	 * done, because there is a possibility that some entry points
+	 * were left unguarded. That would be clearly a bug because it
+	 * will mean that regular kernel code is running with no
+	 * synchronization.
+	 */
+	local_irq_save(flags);
+	atomic_dec(&per_cpu(isol_exit_counter, smp_processor_id()));
+	/* Barrier to sync with requesting a task isolation breaking */
+	smp_mb__after_atomic();
+	/*
+	 * At this point breaking isolation will be treated as a
+	 * separate isolation-breaking event, however interrupts won't
+	 * arrive until local_irq_restore()
+	 */
+
+	/*
+	 * Check for the above mentioned entry without a call to
+	 * task_isolation_kernel_enter()
+	 */
+	if ((this_cpu_read(ll_isol_flags) & FLAG_LL_TASK_ISOLATION)) {
+		/*
+		 * If it did happen, call the function here, to
+		 * prevent further problems from running in
+		 * un-synchronized state
+		 */
+		task_isolation_kernel_enter();
+		/* Report the problem */
+		pr_task_isol_emerg(smp_processor_id(),
+		"Isolation breaking was not detected on kernel entry\n");
+	}
+	/*
+	 * This task is no longer isolated (and if by any chance this
+	 * is the wrong task, it's already not isolated)
+	 */
+	current->task_isolation_flags = 0;
+	clear_tsk_thread_flag(current, TIF_TASK_ISOLATION);
+
+	/* Run the rest of cleanup later */
+	set_tsk_thread_flag(current, TIF_NOTIFY_RESUME);
+
+	local_irq_restore(flags);
+}
+
+/* Disable task isolation for the specified task. */
+static void stop_isolation(struct task_struct *p)
+{
+	int cpu, this_cpu;
+	unsigned long flags;
+
+	this_cpu = get_cpu();
+	cpu = task_cpu(p);
+	if (atomic_inc_return(&per_cpu(isol_exit_counter, cpu)) > 1) {
+		/* Already exiting isolation */
+		atomic_dec(&per_cpu(isol_exit_counter, cpu));
+		put_cpu();
+		return;
+	}
+
+	if (p == current) {
+		p->task_isolation_state = STATE_NORMAL;
+		fast_task_isolation_cpu_cleanup(NULL);
+		task_isolation_cpu_cleanup();
+		put_cpu();
+	} else {
+		/*
+		 * Schedule "slow" cleanup. This relies on
+		 * TIF_NOTIFY_RESUME being set
+		 */
+		spin_lock_irqsave(&task_isolation_cleanup_lock, flags);
+		cpumask_set_cpu(cpu, task_isolation_cleanup_map);
+		spin_unlock_irqrestore(&task_isolation_cleanup_lock, flags);
+		/*
+		 * Setting flags is delegated to the CPU where
+		 * isolated task is running
+		 * isol_exit_counter will be decremented from there as well.
+		 */
+		per_cpu(isol_break_csd, cpu).func =
+		    fast_task_isolation_cpu_cleanup;
+		per_cpu(isol_break_csd, cpu).info = NULL;
+		per_cpu(isol_break_csd, cpu).flags = 0;
+		smp_call_function_single_async(cpu,
+					       &per_cpu(isol_break_csd, cpu));
+		put_cpu();
+	}
+}
+
+/*
+ * This code runs with interrupts disabled just before the return to
+ * userspace, after a prctl() has requested enabling task isolation.
+ * We take whatever steps are needed to avoid being interrupted later:
+ * drain the lru pages, stop the scheduler tick, etc. More
+ * functionality may be added here later to avoid other types of
+ * interrupts from other kernel subsystems. This, however, may still not
+ * have the intended result, so the rest of the system takes into account
+ * the possibility of receiving an interrupt and isolation breaking later.
+ *
+ * If we can't enable task isolation, we update the syscall return
+ * value with an appropriate error.
+ *
+ * This, however, does not enable isolation yet, as far as low-level
+ * flags are concerned. So if interrupts will be enabled, it's still
+ * possible for the task to be interrupted. The call to
+ * task_isolation_exit_to_user_mode() should finally enable task
+ * isolation after this function set FLAG_LL_TASK_ISOLATION_REQUEST.
+ */
+void task_isolation_start(void)
+{
+	int error;
+	unsigned long flags;
+
+	/*
+	 * We should only be called in STATE_NORMAL (isolation
+	 * disabled), on our way out of the kernel from the prctl()
+	 * that turned it on.  If we are exiting from the kernel in
+	 * another state, it means we made it back into the kernel
+	 * without disabling task isolation, and we should investigate
+	 * how (and in any case disable task isolation at this
+	 * point). We are clearly not on the path back from the
+	 * prctl() so we don't touch the syscall return value.
+	 */
+	if (WARN_ON_ONCE(current->task_isolation_state != STATE_NORMAL)) {
+		stop_isolation(current);
+		/* Report the problem */
+		pr_task_isol_emerg(smp_processor_id(),
+		"Isolation start requested while not in the normal state\n");
+		return;
+	}
+
+	/*
+	 * Must be affinitized to a single core with task isolation possible.
+	 * In principle this could be remotely modified between the prctl()
+	 * and the return to userspace, so we have to check it here.
+	 */
+	if (current->nr_cpus_allowed != 1 ||
+	    !is_isolation_cpu(smp_processor_id())) {
+		error = -EINVAL;
+		goto error;
+	}
+
+	/* If the vmstat delayed work is not canceled, we have to try again. */
+	if (!vmstat_idle()) {
+		error = -EAGAIN;
+		goto error;
+	}
+
+	/* Try to stop the dynamic tick. */
+	error = try_stop_full_tick();
+	if (error)
+		goto error;
+
+	/* Drain the pagevecs to avoid unnecessary IPI flushes later. */
+	lru_add_drain();
+
+	local_irq_save(flags);
+
+	/* Record isolated task IDs and name */
+	record_curr_isolated_task();
+
+	current->task_isolation_state = STATE_ISOLATED;
+	this_cpu_write(ll_isol_flags, FLAG_LL_TASK_ISOLATION_REQUEST);
+	/* Barrier to synchronize with reading of flags */
+	smp_mb();
+	local_irq_restore(flags);
+	return;
+
+error:
+	stop_isolation(current);
+	syscall_set_return_value(current, current_pt_regs(), error, 0);
+}
+
+/* Stop task isolation on the remote task and send it a signal. */
+static void send_isolation_signal(struct task_struct *task)
+{
+	int flags = task->task_isolation_flags;
+	kernel_siginfo_t info = {
+		.si_signo = PR_TASK_ISOLATION_GET_SIG(flags) ?: SIGKILL,
+	};
+
+	stop_isolation(task);
+	send_sig_info(info.si_signo, &info, task);
+}
+
+/*
+ * This routine is called from the code responsible for exiting to user mode,
+ * before the point when thread flags are checked for pending work.
+ * That function must be called if the current task is isolated, because
+ * TIF_TASK_ISOLATION must trigger a call to it.
+ */
+void task_isolation_before_pending_work_check(void)
+{
+	int cpu;
+	unsigned long flags;
+
+	/* Handle isolation breaking */
+	if ((this_cpu_read(ll_isol_flags) & FLAG_LL_TASK_ISOLATION_BROKEN)
+	    != 0) {
+		/*
+		 * Clear low-level isolation flags to avoid triggering
+		 * a signal again
+		 */
+		this_cpu_write(ll_isol_flags, 0);
+		/* Send signal to notify about isolation breaking */
+		send_isolation_signal(current);
+		/* Produce generic message about lost isolation */
+		pr_task_isol_warn(smp_processor_id(), "task_isolation lost\n");
+	}
+
+	/*
+	 * If this CPU is in the map of CPUs with cleanup pending,
+	 * remove it from the map and call cleanup
+	 */
+	spin_lock_irqsave(&task_isolation_cleanup_lock, flags);
+
+	cpu = smp_processor_id();
+
+	if (cpumask_test_cpu(cpu, task_isolation_cleanup_map)) {
+		cpumask_clear_cpu(cpu, task_isolation_cleanup_map);
+		spin_unlock_irqrestore(&task_isolation_cleanup_lock, flags);
+		task_isolation_cpu_cleanup();
+	} else
+		spin_unlock_irqrestore(&task_isolation_cleanup_lock, flags);
+}
+
+/*
  * Set CPUs currently running isolated tasks in CPU mask.
  */
 void task_isolation_cpumask(struct cpumask *mask)
@@ -316,4 +583,12 @@ void task_isolation_clear_cpumask(struct cpumask *mask)
 	for_each_cpu(cpu, task_isolation_map)
 		if (task_isolation_on_cpu(cpu))
 			cpumask_clear_cpu(cpu, mask);
+}
+
+/*
+ * Cleanup procedure. The call to this procedure may be delayed.
+ */
+void task_isolation_cpu_cleanup(void)
+{
+	kick_hrtimer();
 }
