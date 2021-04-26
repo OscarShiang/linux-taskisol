@@ -533,6 +533,11 @@ extern void __init hrtimers_init(void);
 /* Show pending timers: */
 extern void sysrq_timer_list_show(void);
 
+#ifdef CONFIG_TASK_ISOLATION
+/* Retrigger next event after returning from task isolation */
+extern void kick_hrtimer(void);
+#endif
+
 int hrtimers_prepare_cpu(unsigned int cpu);
 #ifdef CONFIG_HOTPLUG_CPU
 int hrtimers_dead_cpu(unsigned int cpu);
