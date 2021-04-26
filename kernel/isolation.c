@@ -510,6 +510,78 @@ static void send_isolation_signal(struct task_struct *task)
 	send_sig_info(info.si_signo, &info, task);
 }
 
+/* Only a few syscalls are valid once we are in task isolation mode. */
+static bool is_acceptable_syscall(int syscall)
+{
+	/* No need to incur an isolation signal if we are just exiting. */
+	if (syscall == __NR_exit || syscall == __NR_exit_group)
+		return true;
+
+	/* Check to see if it's the prctl for isolation. */
+	if (syscall == __NR_prctl) {
+		unsigned long arg[SYSCALL_MAX_ARGS];
+
+		syscall_get_arguments(current, current_pt_regs(), arg);
+		if (arg[0] == PR_TASK_ISOLATION)
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * This routine is called from syscall entry, prevents most syscalls
+ * from executing, and if needed raises a signal to notify the process.
+ *
+ * Note that we have to stop isolation before we even print a message
+ * here, since otherwise we might end up reporting an interrupt due to
+ * kicking the printk handling code, rather than reporting the true
+ * cause of interrupt here.
+ *
+ * The message is not suppressed by previous remotely triggered
+ * messages.
+ */
+int task_isolation_syscall(int syscall)
+{
+	struct task_struct *task = current;
+
+	/*
+	 * Check if by any chance syscall is being processed from
+	 * isolated state without a call to
+	 * task_isolation_kernel_enter() happening on entry
+	 */
+	if ((this_cpu_read(ll_isol_flags) & FLAG_LL_TASK_ISOLATION)) {
+		/*
+		 * If it did happen, call the function here, to
+		 * prevent further problems from running in
+		 * un-synchronized state
+		 */
+		task_isolation_kernel_enter();
+		/* Report the problem */
+		pr_task_isol_emerg(smp_processor_id(),
+			"Isolation breaking was not detected on syscall\n");
+		}
+	/*
+	 * Clear low-level isolation flags to avoid triggering
+	 * a signal on return to userspace
+	 */
+	this_cpu_write(ll_isol_flags, 0);
+
+	if (is_acceptable_syscall(syscall)) {
+		stop_isolation(task);
+		return 0;
+	}
+
+	send_isolation_signal(task);
+
+	pr_task_isol_warn(smp_processor_id(),
+			  "task_isolation lost due to syscall %d\n",
+			  syscall);
+
+	syscall_set_return_value(task, current_pt_regs(), -ERESTARTNOINTR, -1);
+	return -1;
+}
+
 /*
  * This routine is called from the code responsible for exiting to user mode,
  * before the point when thread flags are checked for pending work.
@@ -549,6 +621,34 @@ void task_isolation_before_pending_work_check(void)
 		task_isolation_cpu_cleanup();
 	} else
 		spin_unlock_irqrestore(&task_isolation_cleanup_lock, flags);
+}
+
+/*
+ * Called before we wake up a task that has a signal to process.
+ * Needs to be done to handle interrupts that trigger signals, which
+ * we don't catch with task_isolation_interrupt() hooks.
+ *
+ * This message is also suppressed if there was already a remotely
+ * caused message about the same isolation breaking event.
+ */
+void _task_isolation_signal(struct task_struct *task)
+{
+	struct isol_task_desc *desc;
+	int ind, cpu;
+	bool do_warn = (task->task_isolation_state == STATE_ISOLATED);
+
+	cpu = task_cpu(task);
+	desc = &per_cpu(isol_task_descs, cpu);
+	ind = atomic_read(&desc->curr_index) & 1;
+	if (desc->warned[ind])
+		do_warn = false;
+
+	stop_isolation(task);
+
+	if (do_warn) {
+		pr_warn("isolation: %s/%d/%d (cpu %d): task_isolation lost due to signal\n",
+			task->comm, task->tgid, task->pid, cpu);
+	}
 }
 
 /*

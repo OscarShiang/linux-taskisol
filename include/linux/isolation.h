@@ -243,6 +243,19 @@ extern void task_isolation_cpumask(struct cpumask *mask);
 extern void task_isolation_clear_cpumask(struct cpumask *mask);
 
 /**
+ * task_isolation_syscall() - report a syscall from an isolated task
+ * @nr:		The syscall number.
+ *
+ * This routine should be invoked at syscall entry if TIF_TASK_ISOLATION is
+ * set in the thread_info flags.  It checks for valid syscalls,
+ * specifically prctl() with PR_TASK_ISOLATION, exit(), and exit_group().
+ * For any other syscall it will raise a signal and return failure.
+ *
+ * Return: 0 for acceptable syscalls, -1 for all others.
+ */
+extern int task_isolation_syscall(int nr);
+
+/**
  * task_isolation_before_pending_work_check() - check for isolation breaking
  *
  * This routine is called from the code responsible for exiting to user mode,
@@ -251,6 +264,45 @@ extern void task_isolation_clear_cpumask(struct cpumask *mask);
  * TIF_TASK_ISOLATION must trigger a call to it.
  */
 void task_isolation_before_pending_work_check(void);
+
+/**
+ * _task_isolation_interrupt() - report an interrupt of an isolated task
+ * @fmt:	A format string describing the interrupt
+ * @...:	Format arguments, if any.
+ *
+ * This routine should be invoked at any exception or IRQ if
+ * TIF_TASK_ISOLATION is set in the thread_info flags.  It is not necessary
+ * to invoke it if the exception will generate a signal anyway (e.g. a bad
+ * page fault), and in that case it is preferable not to invoke it but just
+ * rely on the standard Linux signal.  The macro task_isolation_syscall()
+ * wraps the TIF_TASK_ISOLATION flag test to simplify the caller code.
+ */
+extern void _task_isolation_interrupt(const char *fmt, ...);
+#define task_isolation_interrupt(fmt, ...)				\
+	do {								\
+		if (current_thread_info()->flags & _TIF_TASK_ISOLATION)	\
+			_task_isolation_interrupt(fmt, ## __VA_ARGS__);	\
+	} while (0)
+
+/**
+ * _task_isolation_signal() - disable task isolation when signal is pending
+ * @task:	The task for which to disable isolation.
+ *
+ * This function generates a diagnostic and disables task isolation;
+ * it should be called if TIF_TASK_ISOLATION is set when notifying a
+ * task of a pending signal. The task_isolation_interrupt() function
+ * normally generates a diagnostic for events that just interrupt a
+ * task without generating a signal; here we need to hook the paths
+ * that correspond to interrupts that do generate a signal.  The macro
+ * task_isolation_signal() wraps the TIF_TASK_ISOLATION flag test to
+ * simplify the caller code.
+ */
+extern void _task_isolation_signal(struct task_struct *task);
+#define task_isolation_signal(task)					\
+	do {								\
+		if (task_thread_info(task)->flags & _TIF_TASK_ISOLATION) \
+			_task_isolation_signal(task);			\
+	} while (0)
 
 #else /* !CONFIG_TASK_ISOLATION */
 static inline int task_isolation_request(unsigned int flags) { return -EINVAL; }
@@ -262,7 +314,9 @@ static inline int task_isolation_on_cpu(int cpu) { return 0; }
 static inline void task_isolation_cpumask(struct cpumask *mask) { }
 static inline void task_isolation_clear_cpumask(struct cpumask *mask) { }
 static inline void task_isolation_cpu_cleanup(void) { }
+static inline int task_isolation_syscall(int nr) { return 0; }
 static inline void task_isolation_before_pending_work_check(void) { }
+static inline void task_isolation_signal(struct task_struct *task) { }
 #endif
 
 #endif /* _LINUX_ISOLATION_H */
