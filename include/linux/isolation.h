@@ -23,6 +23,16 @@ struct task_struct;
 #ifdef CONFIG_TASK_ISOLATION
 
 /*
+ * These values are stored in task_isolation_state.
+ * Note that STATE_NORMAL + TIF_TASK_ISOLATION means we are still
+ * returning from sys_prctl() to userspace.
+ */
+enum {
+	STATE_NORMAL = 0,	/* Not isolated */
+	STATE_ISOLATED = 1	/* In userspace, isolated */
+};
+
+/*
  * Logging
  *
  * This is the implementation of isolation-related messages with

@@ -21,16 +21,6 @@
 #include <linux/hrtimer.h>
 
 /*
- * These values are stored in task_isolation_state.
- * Note that STATE_NORMAL + TIF_TASK_ISOLATION means we are still
- * returning from sys_prctl() to userspace.
- */
-enum {
-	STATE_NORMAL = 0,	/* Not isolated */
-	STATE_ISOLATED = 1	/* In userspace, isolated */
-};
-
-/*
  * Low-level isolation flags.
  * Those flags are used by low-level isolation set/clear/check routines.
  * Those flags should be set last before return to userspace and cleared
@@ -407,7 +397,6 @@ static void stop_isolation(struct task_struct *p)
 		per_cpu(isol_break_csd, cpu).func =
 		    fast_task_isolation_cpu_cleanup;
 		per_cpu(isol_break_csd, cpu).info = NULL;
-		per_cpu(isol_break_csd, cpu).flags = 0;
 		smp_call_function_single_async(cpu,
 					       &per_cpu(isol_break_csd, cpu));
 		put_cpu();
