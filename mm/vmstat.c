@@ -28,6 +28,7 @@
 #include <linux/mm_inline.h>
 #include <linux/page_ext.h>
 #include <linux/page_owner.h>
+#include <linux/task_isolation.h>
 
 #include "internal.h"
 
@@ -316,7 +317,8 @@ static inline void mark_vmstat_dirty(void)
 		return;
 
 	raw_cpu_write(vmstat_dirty, true);
-	set_thread_flag(TIF_TASK_ISOL);
+	if (task_isol_quiesce_activated(current, ISOL_F_QUIESCE_VMSTATS))
+		set_thread_flag(TIF_TASK_ISOL);
 }
 
 void init_sync_vmstat(void)
