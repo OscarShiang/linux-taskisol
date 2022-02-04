@@ -27,6 +27,13 @@ static inline void task_isol_free(struct task_struct *tsk)
 		__task_isol_free(tsk);
 }
 
+void __task_isol_exit(struct task_struct *tsk);
+static inline void task_isol_exit(struct task_struct *tsk)
+{
+	if (tsk->task_isol_info)
+		__task_isol_exit(tsk);
+}
+
 int prctl_task_isol_feat_get(unsigned long arg2, unsigned long arg3,
 			     unsigned long arg4, unsigned long arg5);
 int prctl_task_isol_cfg_get(unsigned long arg2, unsigned long arg3,
@@ -40,9 +47,19 @@ int prctl_task_isol_activate_set(unsigned long arg2, unsigned long arg3,
 
 int __copy_task_isol(struct task_struct *tsk);
 
+void task_isol_exit_to_user_mode(void);
+
 #else
 
+static inline void task_isol_exit_to_user_mode(void)
+{
+}
+
 static inline void task_isol_free(struct task_struct *tsk)
+{
+}
+
+static inline void task_isol_exit(struct task_struct *tsk)
 {
 }
 

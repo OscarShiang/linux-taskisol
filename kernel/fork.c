@@ -2463,6 +2463,7 @@ bad_fork_free_pid:
 	if (pid != &init_struct_pid)
 		free_pid(pid);
 bad_fork_cleanup_task_isol:
+	task_isol_exit(p);
 	task_isol_free(p);
 bad_fork_cleanup_thread:
 	exit_thread(p);
