@@ -67,6 +67,7 @@ struct sighand_struct;
 struct signal_struct;
 struct task_delay_info;
 struct task_group;
+struct task_isol_info;
 
 /*
  * Task state bitmask. NOTE! These bits are also
@@ -1486,6 +1487,10 @@ struct task_struct {
 	 * cores
 	 */
 	struct callback_head		l1d_flush_kill;
+#endif
+
+#ifdef CONFIG_TASK_ISOLATION
+	struct task_isol_info		*task_isol_info;
 #endif
 
 	/*

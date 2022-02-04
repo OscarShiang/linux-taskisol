@@ -58,6 +58,7 @@
 #include <linux/sched/coredump.h>
 #include <linux/sched/task.h>
 #include <linux/sched/cputime.h>
+#include <linux/task_isolation.h>
 #include <linux/rcupdate.h>
 #include <linux/uidgid.h>
 #include <linux/cred.h>
@@ -2530,6 +2531,21 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		error = sched_core_share_pid(arg2, arg3, arg4, arg5);
 		break;
 #endif
+	case PR_ISOL_FEAT_GET:
+		error = prctl_task_isol_feat_get(arg2, arg3, arg4, arg5);
+		break;
+	case PR_ISOL_CFG_GET:
+		error = prctl_task_isol_cfg_get(arg2, arg3, arg4, arg5);
+		break;
+	case PR_ISOL_CFG_SET:
+		error = prctl_task_isol_cfg_set(arg2, arg3, arg4, arg5);
+		break;
+	case PR_ISOL_ACTIVATE_GET:
+		error = prctl_task_isol_activate_get(arg2, arg3, arg4, arg5);
+		break;
+	case PR_ISOL_ACTIVATE_SET:
+		error = prctl_task_isol_activate_set(arg2, arg3, arg4, arg5);
+		break;
 	default:
 		error = -EINVAL;
 		break;

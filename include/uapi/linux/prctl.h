@@ -269,4 +269,51 @@ struct prctl_mm_map {
 # define PR_SCHED_CORE_SHARE_FROM	3 /* pull core_sched cookie to pid */
 # define PR_SCHED_CORE_MAX		4
 
+#define PR_ISOL_FEAT_GET		63
+#define PR_ISOL_CFG_GET			64
+#define PR_ISOL_CFG_SET			65
+
+/* arg2 to CFG_GET/CFG_SET */
+# define I_CFG_FEAT			1
+# define I_CFG_INHERIT			2
+
+#define PR_ISOL_ACTIVATE_GET		66
+#define PR_ISOL_ACTIVATE_SET		67
+
+
+/* Supported features */
+# define ISOL_F_QUIESCE			(1UL << 0)
+
+# define ISOL_F_QUIESCE_MULTIPLE	(1UL << 0)
+#  define ISOL_F_QUIESCE_VMSTATS	(1UL << 0)
+
+struct task_isol_quiesce_extensions {
+	__u64 flags;
+	__u64 supported_quiesce_bits;
+	__u64 pad[6];
+};
+
+/*
+ * This structure provides control over
+ * inheritance of task isolation across
+ * clone and fork.
+ */
+struct task_isol_inherit_control {
+	__u8	inherit_mask;
+	__u8	flags;
+	__u8	pad[6];
+};
+
+# define ISOL_INHERIT_CONF		(1UL << 0)
+# define ISOL_INHERIT_ACTIVE		(1UL << 1)
+
+struct task_isol_quiesce_control {
+	__u64 flags;
+	__u64 quiesce_mask;
+	__u64 quiesce_oneshot_mask;
+	__u64 pad[5];
+};
+
+# define QUIESCE_CONTROL		(1UL << 0)
+
 #endif /* _LINUX_PRCTL_H */

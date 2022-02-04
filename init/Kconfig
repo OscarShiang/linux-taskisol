@@ -675,6 +675,22 @@ config CPU_ISOLATION
 
 	  Say Y if unsure.
 
+config TASK_ISOLATION
+	bool "Task isolation prctl()"
+	depends on GENERIC_ENTRY
+	default n
+	help
+	  Certain types of applications benefit from running uninterrupted by
+	  background OS activities. Realtime systems and high-bandwidth networking
+	  applications with user-space drivers can fall into the category.
+
+	  To create an OS noise free environment for the application, this option
+	  enables the task isolation prctl interface, which allows userspace to
+	  inform the kernel the start and end of the latency sensitive application
+	  section (with configurable system behaviour for that section).
+
+	  Say N if unsure.
+
 source "kernel/rcu/Kconfig"
 
 config BUILD_BIN2C
