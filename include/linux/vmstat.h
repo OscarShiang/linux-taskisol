@@ -34,8 +34,14 @@ static inline void sync_vmstat(void)
 }
 
 void init_sync_vmstat(void);
+
+void vmstat_dirty_to_thread_flag(void);
 #else
 static inline void sync_vmstat(void)
+{
+}
+
+static inline void vmstat_dirty_to_thread_flag(void)
 {
 }
 #endif

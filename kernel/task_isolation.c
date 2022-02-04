@@ -19,6 +19,7 @@
 #include <linux/sched/task.h>
 #include <linux/mm.h>
 #include <linux/vmstat.h>
+#include <linux/preempt.h>
 #include <linux/task_isolation.h>
 
 void __task_isol_exit(struct task_struct *tsk)
@@ -30,6 +31,9 @@ void __task_isol_exit(struct task_struct *tsk)
 		return;
 
 	static_key_slow_dec(&vmstat_sync_enabled);
+
+	preempt_notifier_unregister(&i->preempt_notifier);
+	preempt_notifier_dec();
 }
 
 void __task_isol_free(struct task_struct *tsk)
@@ -40,6 +44,21 @@ void __task_isol_free(struct task_struct *tsk)
 	tsk->task_isol_info = NULL;
 }
 
+static void task_isol_sched_in(struct preempt_notifier *pn, int cpu)
+{
+	vmstat_dirty_to_thread_flag();
+}
+
+static void task_isol_sched_out(struct preempt_notifier *pn,
+				struct task_struct *next)
+{
+}
+
+static __read_mostly struct preempt_ops task_isol_preempt_ops = {
+	.sched_in	= task_isol_sched_in,
+	.sched_out	= task_isol_sched_out,
+};
+
 static struct task_isol_info *task_isol_alloc_context(void)
 {
 	struct task_isol_info *info;
@@ -47,6 +66,10 @@ static struct task_isol_info *task_isol_alloc_context(void)
 	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (unlikely(!info))
 		return ERR_PTR(-ENOMEM);
+
+	preempt_notifier_inc();
+	preempt_notifier_init(&info->preempt_notifier, &task_isol_preempt_ops);
+	preempt_notifier_register(&info->preempt_notifier);
 
 	preempt_disable();
 	init_sync_vmstat();

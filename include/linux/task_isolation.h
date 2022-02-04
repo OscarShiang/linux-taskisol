@@ -17,6 +17,8 @@ struct task_isol_info {
 	u64 oneshot_mask;
 
 	u8 inherit_mask;
+
+	struct preempt_notifier preempt_notifier;
 };
 
 extern void __task_isol_free(struct task_struct *tsk);

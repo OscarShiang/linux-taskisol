@@ -325,6 +325,13 @@ void init_sync_vmstat(void)
 	set_thread_flag(TIF_TASK_ISOL);
 }
 EXPORT_SYMBOL_GPL(vmstat_dirty);
+
+void vmstat_dirty_to_thread_flag(void)
+{
+	if (raw_cpu_read(vmstat_dirty) == true)
+		set_thread_flag(TIF_TASK_ISOL);
+}
+EXPORT_SYMBOL_GPL(vmstat_dirty_to_thread_flag);
 #else
 static inline void mark_vmstat_dirty(void)
 {
