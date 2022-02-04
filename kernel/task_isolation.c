@@ -10,7 +10,6 @@
  */
 
 #include <linux/sched.h>
-#include <linux/task_isolation.h>
 #include <linux/prctl.h>
 #include <linux/slab.h>
 #include <linux/kobject.h>
@@ -20,9 +19,17 @@
 #include <linux/sched/task.h>
 #include <linux/mm.h>
 #include <linux/vmstat.h>
+#include <linux/task_isolation.h>
 
 void __task_isol_exit(struct task_struct *tsk)
 {
+	struct task_isol_info *i;
+
+	i = tsk->task_isol_info;
+	if (!i)
+		return;
+
+	static_key_slow_dec(&vmstat_sync_enabled);
 }
 
 void __task_isol_free(struct task_struct *tsk)
@@ -40,6 +47,12 @@ static struct task_isol_info *task_isol_alloc_context(void)
 	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (unlikely(!info))
 		return ERR_PTR(-ENOMEM);
+
+	preempt_disable();
+	init_sync_vmstat();
+	preempt_enable();
+
+	static_key_slow_inc(&vmstat_sync_enabled);
 
 	return info;
 }
