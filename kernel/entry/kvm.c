@@ -2,6 +2,7 @@
 
 #include <linux/entry-kvm.h>
 #include <linux/kvm_host.h>
+#include <linux/task_isolation.h>
 
 static int xfer_to_guest_mode_work(struct kvm_vcpu *vcpu, unsigned long ti_work)
 {
@@ -21,6 +22,9 @@ static int xfer_to_guest_mode_work(struct kvm_vcpu *vcpu, unsigned long ti_work)
 
 		if (ti_work & _TIF_NOTIFY_RESUME)
 			tracehook_notify_resume(NULL);
+
+		if (ti_work & _TIF_TASK_ISOL)
+			task_isol_exit_to_user_mode();
 
 		ret = arch_xfer_to_guest_mode_handle_work(vcpu, ti_work);
 		if (ret)
