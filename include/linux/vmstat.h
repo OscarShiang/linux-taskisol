@@ -22,7 +22,18 @@ int sysctl_vm_numa_stat_handler(struct ctl_table *table, int write,
 #endif
 
 #if defined(CONFIG_SMP) && defined(CONFIG_TASK_ISOLATION)
-void sync_vmstat(void);
+DECLARE_PER_CPU_ALIGNED(bool, vmstat_dirty);
+
+extern struct static_key vmstat_sync_enabled;
+
+void __sync_vmstat(void);
+static inline void sync_vmstat(void)
+{
+	if (static_key_false(&vmstat_sync_enabled))
+		__sync_vmstat();
+}
+
+void init_sync_vmstat(void);
 #else
 static inline void sync_vmstat(void)
 {
